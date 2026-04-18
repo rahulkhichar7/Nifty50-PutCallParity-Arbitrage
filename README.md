@@ -137,3 +137,6 @@ Based on Zerodha pricing:
 
 This tool is for educational and research purposes only. Trading options involves substantial risk. Always conduct your own due diligence and consult with financial advisors before trading. Past performance and analysis do not guarantee future results.
 
+## Assumptions
+- No slippage/ exicution delay. To add it in cost, modify the spread_cost parameter in config.py 
+- Best lending rates and borrowing rates(SBI) are taken but this may depend on your source of fund & civil score.
