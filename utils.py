@@ -106,6 +106,111 @@ def compute_cost(row):
 
     return total_cost
 
+
+def compute_cost_breakdown(row):
+
+    C = row['ce_liveData_ltp']
+    P = row['pe_liveData_ltp']
+    S = row['spot_price']
+    K = row['strike_price']
+    T = row['T']
+
+    brokerage = (
+        min(config.tr * C, config.B) +
+        min(config.tr * P, config.B) +
+        min(config.tr * S, config.B)
+    )
+
+    transaction_charges = (
+        config.theta_c * C +
+        config.theta_p * P +
+        config.theta_s * S
+    )
+
+    gst = config.gst * (brokerage + transaction_charges)
+
+    if row['is_conversion']:
+        stt = config.tau_c_sell * C + config.tau_s * S
+    elif row['is_reversal']:
+        stt = config.tau_p_sell * P + config.tau_s * S
+    else:
+        stt = 0
+
+    funding = K * (np.exp(-config.rl * T) - np.exp(-config.rb * T))
+
+    margin_block = (config.alpha + config.beta) * S
+    margin_cost = margin_block * (np.exp(config.rb * T) - 1)
+
+    total_cost = (
+        brokerage + transaction_charges + gst + stt +
+        config.spread_cost + funding + margin_cost
+    )
+
+    return pd.Series({
+        'brokerage': brokerage,
+        'transaction_charges': transaction_charges,
+        'gst': gst,
+        'stt': stt,
+        'funding': funding,
+        'margin_cost': margin_cost,
+        'spread_cost': config.spread_cost,
+        'total_cost': total_cost,
+    })
+
+
+def plot_avg_cost_breakdown_pie(df, profitable_only=True, min_liquidity=0, per_lot=False):
+    data = df.copy()
+
+    if min_liquidity > 0:
+        data = data[data['liquidity'] >= min_liquidity].copy()
+
+    if 'net_profit_per_unit' not in data.columns:
+        data['net_profit_per_unit'] = _get_net_profit_series(data, trading_cost=True, per_lot=False)
+
+    if profitable_only:
+        data = data[data['net_profit_per_unit'] > 0].copy()
+
+    if data.empty:
+        raise ValueError('No rows available for the selected filter')
+
+    breakdown = data.apply(compute_cost_breakdown, axis=1)
+    avg = breakdown.mean()
+
+    scale = config.N if per_lot else 1.0
+
+    # Keep the requested 4-way split while preserving full total cost accounting.
+    slices = pd.Series({
+        'Brokerage': (avg['brokerage'] + avg['transaction_charges'] + avg['spread_cost']) * scale,
+        'STT': avg['stt'] * scale,
+        'GST': avg['gst'] * scale,
+        'Funding/Margin': (avg['funding'] + avg['margin_cost']) * scale,
+    })
+
+    fig, ax = plt.subplots(figsize=(8, 8))
+    colors = ['#4e79a7', '#f28e2b', '#e15759', '#59a14f']
+    explode = [0.02, 0.02, 0.02, 0.02]
+    ax.pie(
+        slices.values,
+        labels=slices.index,
+        autopct='%1.1f%%',
+        startangle=90,
+        colors=colors,
+        explode=explode,
+        pctdistance=0.75,
+    )
+    ax.axis('equal')
+
+    unit_label = 'Lot' if per_lot else 'Unit'
+    title_filter = 'Profitable Windows' if profitable_only else 'All Windows'
+    ax.set_title(f'Average Total Cost Breakdown ({title_filter})\nper {unit_label}')
+
+    plt.tight_layout()
+    plt.show()
+
+    out = slices.to_frame(name=f'avg_cost_per_{unit_label.lower()}')
+    out.loc['Total', f'avg_cost_per_{unit_label.lower()}'] = slices.sum()
+    return out
+
 def apply_costs(df):
 
     df['total_cost'] = df.apply(compute_cost, axis=1)
@@ -316,6 +421,165 @@ def plot_spot_price(df):
 
     plt.tight_layout()
     plt.show()
+
+
+def plot_spot_and_max_profit_over_time(
+    df,
+    min_liquidity=0,
+    trading_cost=True,
+    per_lot=False,
+    figsize=(14, 8),
+):
+    data = df.copy()
+
+    if min_liquidity > 0:
+        data = data[data['liquidity'] >= min_liquidity].copy()
+
+    if data.empty:
+        raise ValueError('No rows available after filtering')
+
+    data['profit_value'] = _get_net_profit_series(
+        data,
+        trading_cost=trading_cost,
+        per_lot=per_lot,
+    )
+
+    spot_series = (
+        data.groupby('fetch_time', as_index=False)['spot_price']
+        .mean()
+        .sort_values('fetch_time')
+        .rename(columns={'spot_price': 'spot_price'})
+    )
+
+    max_profit_series = (
+        data.groupby('fetch_time', as_index=False)['profit_value']
+        .max()
+        .sort_values('fetch_time')
+        .rename(columns={'profit_value': 'max_profit'})
+    )
+
+    combined = spot_series.merge(max_profit_series, on='fetch_time', how='inner')
+    if combined.empty:
+        raise ValueError('No overlapping time points found for plotting')
+
+    fig, (ax_top, ax_bottom) = plt.subplots(
+        2,
+        1,
+        figsize=figsize,
+        sharex=True,
+        gridspec_kw={'height_ratios': [1, 1]},
+    )
+
+    ax_top.plot(
+        combined['fetch_time'],
+        combined['spot_price'],
+        color='tab:green',
+        linewidth=2,
+        label='Nifty Spot Price',
+    )
+    ax_top.set_title('Nifty Spot Price and Max Net Profit Over Time')
+    ax_top.set_ylabel('Spot Price')
+    ax_top.grid(True, which='both', linestyle=':', alpha=0.3)
+    ax_top.legend(loc='upper right')
+
+    ax_bottom.plot(
+        combined['fetch_time'],
+        combined['max_profit'],
+        color='tab:blue',
+        linewidth=2,
+        label='Max Net Profit Across Strikes',
+    )
+    ax_bottom.axhline(y=0, color='black', linestyle='--', alpha=0.5)
+    ax_bottom.set_ylabel('Max Net Profit per Lot (₹)' if per_lot else 'Max Net Profit per Unit (₹)')
+    ax_bottom.set_xlabel('Time of Day')
+    ax_bottom.grid(True, which='both', linestyle=':', alpha=0.3)
+    ax_bottom.legend(loc='upper right')
+
+    _apply_intraday_time_axis(ax_bottom)
+
+    plt.tight_layout()
+    plt.show()
+
+    return combined
+
+
+def plot_cumsum_arbitrage_profit_all_opportunities(
+    df,
+    require_liquid=True,
+    min_liquidity=0,
+    per_lot=True,
+    figsize=(14, 6),
+):
+    """
+    Plot cumulative potential arbitrage profit for the full day.
+
+    Assumption:
+    - At every profitable arbitrage opportunity, exactly 1 lot is traded.
+    - Opportunities are taken across all strikes at each timestamp.
+    """
+    data = df.copy()
+
+    if min_liquidity > 0:
+        data = data[data['liquidity'] >= min_liquidity].copy()
+
+    if require_liquid and 'both_legs_liquid' in data.columns:
+        data = data[data['both_legs_liquid']].copy()
+
+    if data.empty:
+        raise ValueError('No rows available after applying filters')
+
+    data['profit_value'] = _get_net_profit_series(
+        data,
+        trading_cost=True,
+        per_lot=per_lot,
+    )
+
+    opportunities = data[data['profit_value'] > 0].copy()
+    if opportunities.empty:
+        raise ValueError('No profitable arbitrage opportunities found')
+
+    summary = (
+        opportunities.groupby('fetch_time', as_index=False)
+        .agg(
+            interval_profit=('profit_value', 'sum'),
+            opportunities_count=('profit_value', 'size'),
+        )
+        .sort_values('fetch_time')
+    )
+
+    summary['cumulative_profit'] = summary['interval_profit'].cumsum()
+
+    fig, ax = plt.subplots(figsize=figsize)
+    ax.plot(
+        summary['fetch_time'],
+        summary['cumulative_profit'],
+        color='tab:green',
+        linewidth=2,
+        label='Cumulative Arbitrage Profit',
+    )
+
+    _apply_intraday_time_axis(ax)
+    ax.set_title('Cumulative Potential Arbitrage Profit (All Profitable Opportunities)')
+    ax.set_xlabel('Time of Day')
+    ax.set_ylabel('Cumulative Profit (₹ per Lot)' if per_lot else 'Cumulative Profit (₹ per Unit)')
+    ax.grid(True, which='both', linestyle=':', alpha=0.3)
+    ax.legend(loc='upper left')
+
+    total_profit = summary['cumulative_profit'].iloc[-1]
+    ax.text(
+        0.01,
+        0.95,
+        f'Total Day Profit: {total_profit:,.2f}',
+        transform=ax.transAxes,
+        ha='left',
+        va='top',
+        bbox=dict(boxstyle='round,pad=0.3', facecolor='white', alpha=0.8),
+    )
+
+    plt.tight_layout()
+    plt.show()
+
+    return summary
 
 
 def plot_strike_vs_both_legs_liquid_pct(df):
@@ -689,6 +953,52 @@ def plot_abs_violation_vs_net_profit(df, strike=None):
     })
 
 
+def plot_moneyness_vs_net_profit(df, strike=None, min_liquidity=0):
+    data = df.copy()
+
+    if strike is not None:
+        data = data[data['strike_price'] == strike].copy()
+
+    if min_liquidity > 0:
+        data = data[data['liquidity'] >= min_liquidity].copy()
+
+    if data.empty:
+        strike_msg = f" for strike {strike}" if strike is not None else ""
+        raise ValueError(f"No rows found{strike_msg}")
+
+    if 'spot_price' not in data.columns or 'strike_price' not in data.columns:
+        raise KeyError("Expected both 'spot_price' and 'strike_price' columns")
+
+    if 'net_profit_per_unit' in data.columns:
+        net_profit = data['net_profit_per_unit']
+    else:
+        net_profit = _get_net_profit_series(data, trading_cost=True, per_lot=False)
+
+    moneyness = data['spot_price'] / data['strike_price']
+
+    fig, ax = plt.subplots(figsize=(10, 6))
+    ax.scatter(moneyness, net_profit, s=12, alpha=0.45, c=net_profit, cmap='RdYlGn')
+    ax.axhline(y=0, color='black', linestyle='--', alpha=0.6)
+    ax.axvline(x=1.0, color='tab:blue', linestyle=':', alpha=0.7)
+
+    title = 'Moneyness (S/K) vs Net Profit per Unit'
+    if strike is not None:
+        title += f' (Strike {strike})'
+
+    ax.set_title(title)
+    ax.set_xlabel('Moneyness (S/K)')
+    ax.set_ylabel('Net Profit per Unit (₹)')
+    ax.grid(True, linestyle=':', alpha=0.3)
+
+    plt.tight_layout()
+    plt.show()
+
+    return pd.DataFrame({
+        'moneyness': moneyness,
+        'net_profit_per_unit': net_profit,
+    })
+
+
 def plot_option_chain_heatmap_over_time(
     df,
     min_liquidity=0,
@@ -766,11 +1076,23 @@ def plot_option_chain_heatmap_over_time(
     # Create figure and axis
     fig, ax = plt.subplots(figsize=figsize)
     
-    # White-centered diverging map: red (loss), white (efficiency zone), green (profit).
+    # Rich multi-stop diverging map: red (loss) -> white (efficiency zone) -> green (profit).
     cmap = mcolors.LinearSegmentedColormap.from_list(
-        'red_white_green',
-        ['#b2182b', '#ffffff', '#1a9850'],
-        N=256,
+        'red_white_green_rich',
+        [
+            '#8b0000',  # deep red
+            '#d73027',
+            '#f46d43',
+            '#fdae61',
+            '#fee08b',
+            '#ffffff',  # center efficiency zone
+            '#d9ef8b',
+            '#a6d96a',
+            '#66bd63',
+            '#1a9850',
+            '#006837',  # deep green
+        ],
+        N=1024,
     )
 
     # Smooth rendering with rapid color transition around the efficiency boundary.
