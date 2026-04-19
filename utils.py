@@ -170,8 +170,32 @@ def plot_avg_cost_breakdown_pie(df, profitable_only=True, min_liquidity=0, per_l
     if profitable_only:
         data = data[data['net_profit_per_unit'] > 0].copy()
 
+    unit_label = 'Lot' if per_lot else 'Unit'
+
     if data.empty:
-        raise ValueError('No rows available for the selected filter')
+        print('No rows available for the selected filter. Returning zero cost breakdown.')
+
+        fig, ax = plt.subplots(figsize=(8, 8))
+        ax.axis('off')
+        ax.text(
+            0.5,
+            0.5,
+            'No data available for selected filters',
+            ha='center',
+            va='center',
+            fontsize=12,
+            bbox=dict(boxstyle='round,pad=0.4', facecolor='white', alpha=0.9),
+        )
+        title_filter = 'Profitable Windows' if profitable_only else 'All Windows'
+        ax.set_title(f'Average Total Cost Breakdown ({title_filter})\nper {unit_label}')
+        plt.tight_layout()
+        plt.show()
+
+        out = pd.DataFrame(
+            {f'avg_cost_per_{unit_label.lower()}': [0.0, 0.0, 0.0, 0.0, 0.0]},
+            index=['Brokerage', 'STT', 'GST', 'Funding/Margin', 'Total'],
+        )
+        return out
 
     breakdown = data.apply(compute_cost_breakdown, axis=1)
     avg = breakdown.mean()
@@ -200,7 +224,6 @@ def plot_avg_cost_breakdown_pie(df, profitable_only=True, min_liquidity=0, per_l
     )
     ax.axis('equal')
 
-    unit_label = 'Lot' if per_lot else 'Unit'
     title_filter = 'Profitable Windows' if profitable_only else 'All Windows'
     ax.set_title(f'Average Total Cost Breakdown ({title_filter})\nper {unit_label}')
 
@@ -209,6 +232,162 @@ def plot_avg_cost_breakdown_pie(df, profitable_only=True, min_liquidity=0, per_l
 
     out = slices.to_frame(name=f'avg_cost_per_{unit_label.lower()}')
     out.loc['Total', f'avg_cost_per_{unit_label.lower()}'] = slices.sum()
+    return out
+
+
+def plot_opportunity_split_pie(df, min_liquidity=0, require_liquid=False):
+    """
+    Pie chart of profitable opportunities split by arbitrage type.
+
+    Categories:
+    - Conversion
+    - Reversal
+
+    Values:
+    - Count of rows where net_profit_per_unit > 0
+    """
+    data = df.copy()
+
+    if min_liquidity > 0:
+        data = data[data['liquidity'] >= min_liquidity].copy()
+
+    if require_liquid and 'both_legs_liquid' in data.columns:
+        data = data[data['both_legs_liquid']].copy()
+
+    if 'net_profit_per_unit' not in data.columns:
+        data['net_profit_per_unit'] = _get_net_profit_series(data, trading_cost=True, per_lot=False)
+
+    profitable = data[data['net_profit_per_unit'] > 0].copy()
+
+    conversion_count = int(profitable['is_conversion'].sum()) if 'is_conversion' in profitable.columns else 0
+    reversal_count = int(profitable['is_reversal'].sum()) if 'is_reversal' in profitable.columns else 0
+
+    counts = pd.Series({'Conversion': conversion_count, 'Reversal': reversal_count})
+
+    if counts.sum() == 0:
+        print('No profitable opportunities found for the selected filter. Returning zero split.')
+        fig, ax = plt.subplots(figsize=(8, 8))
+        ax.axis('off')
+        ax.text(
+            0.5,
+            0.5,
+            'No profitable opportunities\nfor selected filters',
+            ha='center',
+            va='center',
+            fontsize=12,
+            bbox=dict(boxstyle='round,pad=0.4', facecolor='white', alpha=0.9),
+        )
+        ax.set_title('Opportunity Split (Profitable Rows)')
+        plt.tight_layout()
+        plt.show()
+
+        out = counts.to_frame(name='profitable_count')
+        out.loc['Total', 'profitable_count'] = int(counts.sum())
+        return out
+
+    fig, ax = plt.subplots(figsize=(8, 8))
+    colors = ['#4e79a7', '#f28e2b']
+    explode = [0.03, 0.03]
+    ax.pie(
+        counts.values,
+        labels=counts.index,
+        autopct='%1.1f%%',
+        startangle=90,
+        colors=colors,
+        explode=explode,
+    )
+    ax.axis('equal')
+    ax.set_title('Opportunity Split (Profitable Rows)\nConversion vs Reversal')
+
+    plt.tight_layout()
+    plt.show()
+
+    out = counts.to_frame(name='profitable_count')
+    out.loc['Total', 'profitable_count'] = int(counts.sum())
+    return out
+
+
+def plot_profit_contribution_split_pie(df, min_liquidity=0, require_liquid=False):
+    """
+    Pie chart of profitable rupee contribution split by arbitrage type.
+
+    Categories:
+    - Conversion Total Profit
+    - Reversal Total Profit
+
+    Values:
+    - sum(net_profit_per_lot) for rows where net_profit_per_unit > 0
+    """
+    data = df.copy()
+
+    if min_liquidity > 0:
+        data = data[data['liquidity'] >= min_liquidity].copy()
+
+    if require_liquid and 'both_legs_liquid' in data.columns:
+        data = data[data['both_legs_liquid']].copy()
+
+    if 'net_profit_per_unit' not in data.columns:
+        data['net_profit_per_unit'] = _get_net_profit_series(data, trading_cost=True, per_lot=False)
+
+    if 'net_profit_per_lot' not in data.columns:
+        data['net_profit_per_lot'] = config.N * data['net_profit_per_unit']
+
+    profitable = data[data['net_profit_per_unit'] > 0].copy()
+
+    conversion_profit = (
+        float(profitable.loc[profitable['is_conversion'], 'net_profit_per_lot'].sum())
+        if 'is_conversion' in profitable.columns else 0.0
+    )
+    reversal_profit = (
+        float(profitable.loc[profitable['is_reversal'], 'net_profit_per_lot'].sum())
+        if 'is_reversal' in profitable.columns else 0.0
+    )
+
+    contributions = pd.Series({
+        'Conversion Total Profit': conversion_profit,
+        'Reversal Total Profit': reversal_profit,
+    })
+
+    if contributions.sum() <= 0:
+        print('No profitable rupee contribution found for the selected filter. Returning zero split.')
+        fig, ax = plt.subplots(figsize=(8, 8))
+        ax.axis('off')
+        ax.text(
+            0.5,
+            0.5,
+            'No profitable rupee contribution\nfor selected filters',
+            ha='center',
+            va='center',
+            fontsize=12,
+            bbox=dict(boxstyle='round,pad=0.4', facecolor='white', alpha=0.9),
+        )
+        ax.set_title('Profit Contribution Split (₹)')
+        plt.tight_layout()
+        plt.show()
+
+        out = contributions.to_frame(name='total_profit_rupees')
+        out.loc['Total', 'total_profit_rupees'] = float(contributions.sum())
+        return out
+
+    fig, ax = plt.subplots(figsize=(8, 8))
+    colors = ['#2a9d8f', '#e76f51']
+    explode = [0.03, 0.03]
+    ax.pie(
+        contributions.values,
+        labels=contributions.index,
+        autopct='%1.1f%%',
+        startangle=90,
+        colors=colors,
+        explode=explode,
+    )
+    ax.axis('equal')
+    ax.set_title('Profit Contribution Split (₹)\nConversion vs Reversal')
+
+    plt.tight_layout()
+    plt.show()
+
+    out = contributions.to_frame(name='total_profit_rupees')
+    out.loc['Total', 'total_profit_rupees'] = float(contributions.sum())
     return out
 
 def apply_costs(df):
@@ -249,6 +428,9 @@ def _apply_intraday_time_axis(ax):
 
 
 def _set_strike_ticks(ax, strike_series, step=500):
+    if strike_series is None or len(strike_series) == 0:
+        return
+
     min_strike = int(strike_series.min())
     max_strike = int(strike_series.max())
     start_tick = (min_strike // step) * step
@@ -526,7 +708,8 @@ def plot_cumsum_arbitrage_profit_all_opportunities(
         data = data[data['both_legs_liquid']].copy()
 
     if data.empty:
-        raise ValueError('No rows available after applying filters')
+        print('No rows available after applying filters')
+        return pd.DataFrame(columns=['fetch_time', 'interval_profit', 'opportunities_count', 'cumulative_profit'])
 
     data['profit_value'] = _get_net_profit_series(
         data,
@@ -535,17 +718,32 @@ def plot_cumsum_arbitrage_profit_all_opportunities(
     )
 
     opportunities = data[data['profit_value'] > 0].copy()
-    if opportunities.empty:
-        raise ValueError('No profitable arbitrage opportunities found')
 
-    summary = (
-        opportunities.groupby('fetch_time', as_index=False)
-        .agg(
-            interval_profit=('profit_value', 'sum'),
-            opportunities_count=('profit_value', 'size'),
-        )
+    # Build complete intraday time series. Timestamps with no profitable opportunities
+    # are represented with zero interval profit so cumulative PnL stays well-defined.
+    all_times = (
+        data[['fetch_time']]
+        .drop_duplicates()
         .sort_values('fetch_time')
     )
+
+    if opportunities.empty:
+        summary = all_times.copy()
+        summary['interval_profit'] = 0.0
+        summary['opportunities_count'] = 0
+    else:
+        interval_summary = (
+            opportunities.groupby('fetch_time', as_index=False)
+            .agg(
+                interval_profit=('profit_value', 'sum'),
+                opportunities_count=('profit_value', 'size'),
+            )
+            .sort_values('fetch_time')
+        )
+
+        summary = all_times.merge(interval_summary, on='fetch_time', how='left')
+        summary['interval_profit'] = summary['interval_profit'].fillna(0.0)
+        summary['opportunities_count'] = summary['opportunities_count'].fillna(0).astype(int)
 
     summary['cumulative_profit'] = summary['interval_profit'].cumsum()
 
@@ -565,7 +763,9 @@ def plot_cumsum_arbitrage_profit_all_opportunities(
     ax.grid(True, which='both', linestyle=':', alpha=0.3)
     ax.legend(loc='upper left')
 
-    total_profit = summary['cumulative_profit'].iloc[-1]
+    total_profit = summary['cumulative_profit'].iloc[-1] if not summary.empty else 0.0
+    title_suffix = ' (No Profitable Windows)' if opportunities.empty else ''
+    ax.set_title(f'Cumulative Potential Arbitrage Profit (All Profitable Opportunities){title_suffix}')
     ax.text(
         0.01,
         0.95,
@@ -1036,7 +1236,7 @@ def plot_option_chain_heatmap_over_time(
     
     if data.empty:
         print("No data available after filtering")
-        return
+        return pd.DataFrame()
     
     data['profit_value'] = _get_net_profit_series(
         data,
@@ -1051,6 +1251,10 @@ def plot_option_chain_heatmap_over_time(
         values='profit_value',
         aggfunc='mean'  # In case of duplicates, take mean
     )
+
+    if pivot_data.empty or pivot_data.notna().sum().sum() == 0:
+        print('No plottable heatmap values for selected day/expiry/filter')
+        return pivot_data
     
     # Sort strikes from lowest to highest
     pivot_data = pivot_data.sort_index()
@@ -1060,6 +1264,8 @@ def plot_option_chain_heatmap_over_time(
     
     # Determine vmin, vmax for centered colormap
     abs_max = max(abs(pivot_data.min().min()), abs(pivot_data.max().max()))
+    if not np.isfinite(abs_max) or abs_max == 0:
+        abs_max = 1.0
     vmin = -abs_max
     vmax = abs_max
 

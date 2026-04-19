@@ -24,7 +24,7 @@ rb = 0.115
 rl = 0.06
 
 # Spread: Slippage & Delay in exicution
-spread_cost = 1
+spread_cost = 0
 
 # Lot size
 N = 65
