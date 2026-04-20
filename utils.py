@@ -390,6 +390,336 @@ def plot_profit_contribution_split_pie(df, min_liquidity=0, require_liquid=False
     out.loc['Total', 'total_profit_rupees'] = float(contributions.sum())
     return out
 
+
+def plot_violation_liquidity_stacked_bar(
+    df,
+    measure='count',
+    profitable_only=True,
+    min_liquidity=0,
+    require_liquid=False,
+):
+    """
+    Stacked bar chart splitting violations into liquid vs illiquid components.
+
+    Parameters
+    ----------
+    measure : {'count', 'value'}
+        'count' -> count of rows
+        'value' -> sum of net_profit_per_lot
+    profitable_only : bool
+        If True, include only rows with net_profit_per_unit > 0.
+    """
+    data = df.copy()
+
+    if min_liquidity > 0:
+        data = data[data['liquidity'] >= min_liquidity].copy()
+
+    if require_liquid and 'both_legs_liquid' in data.columns:
+        data = data[data['both_legs_liquid']].copy()
+
+    if 'net_profit_per_unit' not in data.columns:
+        data['net_profit_per_unit'] = _get_net_profit_series(data, trading_cost=True, per_lot=False)
+
+    if 'net_profit_per_lot' not in data.columns:
+        data['net_profit_per_lot'] = config.N * data['net_profit_per_unit']
+
+    if profitable_only:
+        data = data[data['net_profit_per_unit'] > 0].copy()
+
+    if 'both_legs_liquid' not in data.columns:
+        ce_marker = data['ce_markers'].fillna('').astype(str).str.upper()
+        pe_marker = data['pe_markers'].fillna('').astype(str).str.upper()
+        data['both_legs_liquid'] = (~ce_marker.str.contains('ILLIQUID')) & (~pe_marker.str.contains('ILLIQUID'))
+
+    if measure not in {'count', 'value'}:
+        raise ValueError("measure must be either 'count' or 'value'")
+
+    if data.empty:
+        print('No rows available for the selected filter. Returning zero stacked bar.')
+        fig, ax = plt.subplots(figsize=(8, 6))
+        ax.axis('off')
+        ax.text(
+            0.5,
+            0.5,
+            'No rows available\nfor selected filters',
+            ha='center',
+            va='center',
+            fontsize=12,
+            bbox=dict(boxstyle='round,pad=0.4', facecolor='white', alpha=0.9),
+        )
+        ax.set_title('Violation Split by Liquidity')
+        plt.tight_layout()
+        plt.show()
+        return pd.DataFrame({'Liquid (Tradable)': [0], 'Illiquid (Ghost)': [0]}, index=['Violation Split'])
+
+    if measure == 'count':
+        liquid_value = int(data['both_legs_liquid'].sum())
+        illiquid_value = int((~data['both_legs_liquid']).sum())
+        ylabel = 'Count of Violations'
+        title_suffix = 'Count'
+    else:
+        liquid_value = float(data.loc[data['both_legs_liquid'], 'net_profit_per_lot'].sum())
+        illiquid_value = float(data.loc[~data['both_legs_liquid'], 'net_profit_per_lot'].sum())
+        ylabel = 'Total Profit (₹)'
+        title_suffix = 'Value'
+
+    total_value = liquid_value + illiquid_value
+
+    fig, ax = plt.subplots(figsize=(8, 6))
+    bar_label = 'Violation Split'
+    liquid_color = '#2a9d8f'
+    illiquid_color = '#e76f51'
+
+    ax.bar([bar_label], [liquid_value], color=liquid_color, label='Liquid (Tradable)')
+    ax.bar([bar_label], [illiquid_value], bottom=[liquid_value], color=illiquid_color, label='Illiquid (Ghost)')
+
+    ax.text(0, liquid_value / 2 if liquid_value else 0.02, f'{liquid_value:,.0f}', ha='center', va='center', color='white', fontweight='bold')
+    ax.text(0, liquid_value + (illiquid_value / 2 if illiquid_value else 0.02), f'{illiquid_value:,.0f}', ha='center', va='center', color='white', fontweight='bold')
+    ax.text(0, total_value, f'Total: {total_value:,.0f}', ha='center', va='bottom', fontsize=10)
+
+    ax.set_title(f'Violation Split by Liquidity ({title_suffix})')
+    ax.set_ylabel(ylabel)
+    ax.legend(loc='upper right')
+    ax.grid(True, axis='y', linestyle=':', alpha=0.3)
+
+    plt.tight_layout()
+    plt.show()
+
+    return pd.DataFrame({
+        'Liquid (Tradable)': [liquid_value],
+        'Illiquid (Ghost)': [illiquid_value],
+        'Total': [total_value],
+    }, index=['Violation Split'])
+
+
+def plot_total_violations_stacked_bar(df, measure='count', min_liquidity=0):
+    """
+    Stacked bar chart of total violations split into liquid vs illiquid.
+
+    Parameters
+    ----------
+    measure : {'count', 'value'}
+        'count' -> count of violation rows
+        'value' -> sum of abs_violation
+    """
+    data = df.copy()
+
+    if min_liquidity > 0:
+        data = data[data['liquidity'] >= min_liquidity].copy()
+
+    if 'both_legs_liquid' not in data.columns:
+        ce_marker = data['ce_markers'].fillna('').astype(str).str.upper()
+        pe_marker = data['pe_markers'].fillna('').astype(str).str.upper()
+        data['both_legs_liquid'] = (~ce_marker.str.contains('ILLIQUID')) & (~pe_marker.str.contains('ILLIQUID'))
+
+    if 'abs_violation' not in data.columns:
+        data['abs_violation'] = _get_abs_violation_series(data)
+
+    if measure not in {'count', 'value'}:
+        raise ValueError("measure must be either 'count' or 'value'")
+
+    if data.empty:
+        print('No rows available for the selected filter. Returning zero stacked bar.')
+        fig, ax = plt.subplots(figsize=(8, 6))
+        ax.axis('off')
+        ax.text(
+            0.5,
+            0.5,
+            'No rows available\nfor selected filters',
+            ha='center',
+            va='center',
+            fontsize=12,
+            bbox=dict(boxstyle='round,pad=0.4', facecolor='white', alpha=0.9),
+        )
+        ax.set_title('Total Violations Split by Liquidity')
+        plt.tight_layout()
+        plt.show()
+        return pd.DataFrame({'Liquid (Tradable)': [0], 'Illiquid (Ghost)': [0]}, index=['Total Violations'])
+
+    if measure == 'count':
+        liquid_value = int(data['both_legs_liquid'].sum())
+        illiquid_value = int((~data['both_legs_liquid']).sum())
+        ylabel = 'Violation Count'
+        title_suffix = 'Count'
+    else:
+        liquid_value = float(data.loc[data['both_legs_liquid'], 'abs_violation'].sum())
+        illiquid_value = float(data.loc[~data['both_legs_liquid'], 'abs_violation'].sum())
+        ylabel = 'Violation Magnitude (₹)'
+        title_suffix = 'Value'
+
+    total_value = liquid_value + illiquid_value
+
+    fig, ax = plt.subplots(figsize=(8, 6))
+    bar_label = 'Total Violations'
+    liquid_color = '#2a9d8f'
+    illiquid_color = '#e76f51'
+
+    ax.bar([bar_label], [liquid_value], color=liquid_color, label='Liquid (Tradable)')
+    ax.bar([bar_label], [illiquid_value], bottom=[liquid_value], color=illiquid_color, label='Illiquid (Ghost)')
+
+    ax.text(0, liquid_value / 2 if liquid_value else 0.02, f'{liquid_value:,.0f}', ha='center', va='center', color='white', fontweight='bold')
+    ax.text(0, liquid_value + (illiquid_value / 2 if illiquid_value else 0.02), f'{illiquid_value:,.0f}', ha='center', va='center', color='white', fontweight='bold')
+    ax.text(0, total_value, f'Total: {total_value:,.0f}', ha='center', va='bottom', fontsize=10)
+
+    ax.set_title(f'Total Violations Split by Liquidity ({title_suffix})')
+    ax.set_ylabel(ylabel)
+    ax.legend(loc='upper right')
+    ax.grid(True, axis='y', linestyle=':', alpha=0.3)
+
+    plt.tight_layout()
+    plt.show()
+
+    return pd.DataFrame({
+        'Liquid (Tradable)': [liquid_value],
+        'Illiquid (Ghost)': [illiquid_value],
+        'Total': [total_value],
+    }, index=['Total Violations'])
+
+
+def plot_arbitrage_half_life_histogram(
+    df,
+    min_liquidity=0,
+    require_liquid=False,
+    per_lot=False,
+    figsize=(10, 6),
+):
+    """
+    Histogram of how long profitable arbitrage stays alive.
+
+    A run is defined as consecutive 30-second intervals where the same strike remains
+    profitable. Each run contributes one duration sample to the histogram.
+    """
+    data = df.copy()
+
+    if min_liquidity > 0:
+        data = data[data['liquidity'] >= min_liquidity].copy()
+
+    if require_liquid and 'both_legs_liquid' in data.columns:
+        data = data[data['both_legs_liquid']].copy()
+
+    if 'net_profit_per_unit' not in data.columns:
+        data['net_profit_per_unit'] = _get_net_profit_series(data, trading_cost=True, per_lot=False)
+
+    if 'net_profit_per_lot' not in data.columns:
+        data['net_profit_per_lot'] = config.N * data['net_profit_per_unit']
+
+    if data.empty:
+        print('No rows available for the selected filter. Returning empty half-life histogram.')
+        fig, ax = plt.subplots(figsize=figsize)
+        ax.axis('off')
+        ax.text(
+            0.5,
+            0.5,
+            'No data available\nfor selected filters',
+            ha='center',
+            va='center',
+            fontsize=12,
+            bbox=dict(boxstyle='round,pad=0.4', facecolor='white', alpha=0.9),
+        )
+        ax.set_title('Arbitrage Half-Life (Persistence)')
+        plt.tight_layout()
+        plt.show()
+        return pd.DataFrame(columns=['duration_seconds', 'duration_intervals', 'frequency'])
+
+    profitable = data[data['net_profit_per_unit'] > 0].copy()
+    if profitable.empty:
+        print('No profitable arbitrage runs found for the selected filter. Returning empty histogram.')
+        fig, ax = plt.subplots(figsize=figsize)
+        ax.axis('off')
+        ax.text(
+            0.5,
+            0.5,
+            'No profitable arbitrage runs\nfor selected filters',
+            ha='center',
+            va='center',
+            fontsize=12,
+            bbox=dict(boxstyle='round,pad=0.4', facecolor='white', alpha=0.9),
+        )
+        ax.set_title('Arbitrage Half-Life (Persistence)')
+        plt.tight_layout()
+        plt.show()
+        return pd.DataFrame(columns=['duration_seconds', 'duration_intervals', 'frequency'])
+
+    if 'strike_price' not in profitable.columns or 'fetch_time' not in profitable.columns:
+        raise KeyError("Expected both 'strike_price' and 'fetch_time' columns")
+
+    durations = []
+    for strike_price, group in profitable.groupby('strike_price'):
+        ordered = group.sort_values('fetch_time').drop_duplicates(subset=['fetch_time']).copy()
+        ordered['time_diff_seconds'] = ordered['fetch_time'].diff().dt.total_seconds()
+
+        # Start a new run if there is a gap larger than the expected 30-second cadence.
+        run_id = (ordered['time_diff_seconds'].isna() | (ordered['time_diff_seconds'] > 30.0)).cumsum()
+
+        for _, run in ordered.groupby(run_id):
+            intervals = len(run)
+            if intervals <= 0:
+                continue
+            durations.append({
+                'strike_price': strike_price,
+                'duration_intervals': intervals,
+                'duration_seconds': intervals * 30,
+            })
+
+    duration_df = pd.DataFrame(durations)
+    if duration_df.empty:
+        print('No consecutive profitable 30-second runs found.')
+        fig, ax = plt.subplots(figsize=figsize)
+        ax.axis('off')
+        ax.text(
+            0.5,
+            0.5,
+            'No consecutive profitable runs\nfound at 30-second resolution',
+            ha='center',
+            va='center',
+            fontsize=12,
+            bbox=dict(boxstyle='round,pad=0.4', facecolor='white', alpha=0.9),
+        )
+        ax.set_title('Arbitrage Half-Life (Persistence)')
+        plt.tight_layout()
+        plt.show()
+        return pd.DataFrame(columns=['duration_seconds', 'duration_intervals', 'frequency'])
+
+    summary = (
+        duration_df.groupby('duration_seconds', as_index=False)
+        .size()
+        .rename(columns={'size': 'frequency'})
+        .sort_values('duration_seconds')
+    )
+    summary['duration_intervals'] = (summary['duration_seconds'] // 30).astype(int)
+
+    fig, ax = plt.subplots(figsize=figsize)
+    ax.bar(
+        summary['duration_seconds'],
+        summary['frequency'],
+        width=18,
+        color='tab:blue',
+        edgecolor='white',
+        alpha=0.85,
+        align='center',
+    )
+
+    ax.set_title('Arbitrage Half-Life (Persistence)')
+    ax.set_xlabel('Duration of Profitability (seconds)')
+    ax.set_ylabel('Frequency')
+    ax.grid(True, axis='y', linestyle=':', alpha=0.3)
+
+    max_duration = int(summary['duration_seconds'].max())
+    if len(summary) <= 12:
+        xticks = summary['duration_seconds'].tolist()
+    else:
+        tick_step = max(1, int(np.ceil(len(summary) / 12)))
+        xticks = summary['duration_seconds'].iloc[::tick_step].tolist()
+        if xticks[-1] != max_duration:
+            xticks.append(max_duration)
+    ax.set_xticks(xticks)
+    ax.set_xticklabels([f'{int(x)}s' for x in xticks], rotation=45, ha='right')
+
+    plt.tight_layout()
+    plt.show()
+
+    return summary[['duration_seconds', 'duration_intervals', 'frequency']]
+
 def apply_costs(df):
 
     df['total_cost'] = df.apply(compute_cost, axis=1)
