@@ -137,7 +137,7 @@ def dashboard_body():
     # Header
     col_spot, col_time, col_status = st.columns([1, 1, 1])
     col_spot.metric("NIFTY Spot", f"₹{df['spot_price'].iloc[0]:,.2f}")
-    col_time.metric("Last Update", datetime.now().strftime("%H:%M:%S"))
+    # col_time.metric("Last Update", datetime.now().strftime("%H:%M:%S"))
     col_status.metric("Mode", "⏸️ Paused" if is_paused else "🔄 Live")
 
     st.divider()
