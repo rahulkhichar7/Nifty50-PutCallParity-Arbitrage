@@ -39,7 +39,7 @@ def _flatten_dict(prefix: str, value: dict[str, Any]) -> dict[str, Any]:
 
 
 def fetch_groww_option_chain(symbol: str, expiry: str) -> pd.DataFrame:
-	url = f"https://groww.in/options/{symbol.lower()}?expiry={expiry}"
+	url = f"https://groww.in/options/{str(symbol).lower()}?expiry={expiry}"
 	response = requests.get(url, timeout=30)
 	response.raise_for_status()
 
