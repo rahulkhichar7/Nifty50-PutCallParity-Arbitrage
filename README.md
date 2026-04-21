@@ -29,7 +29,10 @@ When market prices deviate from this relationship, arbitrage opportunities exist
 ├── Test.ipynb            # Jupyter notebook for analysis and testing
 ├── requirements.txt      # Python dependencies
 ├── README.md            # This file
-└── Project Statements.pdf # Detailed project documentation
+└── Project Statements.pdf # problem statement.
+└──bot/
+    └──app.py # contain streamlit UI code
+    └──requirements.txt # dependencies for streamlit application
 ```
 
 ## How It Works
@@ -109,6 +112,52 @@ See `Test.ipynb` for complete analysis workflow:
 **`plot_arbitrage(df, strike, avoid_illiquid=False, trading_cost=True)`**
 - Visualizes arbitrage opportunities over time
 - Color-codes by liquidity
+
+## Live Bot for Analysis
+
+A simple real-time dashboard to detect **Put–Call Parity arbitrage opportunities** for NIFTY options across all strike prices. It adjusts for real-world costs and highlights only practically tradable opportunities.
+
+---
+
+### 🚀 Features
+- Live option chain data (from Groww)  
+- Arbitrage detection across all strikes  
+- Cost-adjusted signals (brokerage, STT, funding, margin)  
+- Arbitrage shown as % of spot price  
+- Liquidity filter using Open Interest (CE vs PE)  
+- Auto-refresh (~30 sec) for real-time tracking  
+
+---
+
+### 🛠️ Tech Stack
+- Python  
+- Streamlit (UI)  
+- Pandas & NumPy (data processing)  
+- Plotly (visualization)  
+
+---
+
+### 🌐 Live App
+https://nifty50-arbitrage-detection.streamlit.app/
+
+---
+
+### ⚙️ How to Run Locally
+
+1. Clone the repo
+```bash
+git clone <your-repo-link>
+cd bot
+```
+
+Install dependencies
+```bash
+pip install -r requirements.txt
+```
+Run the app
+```bash
+streamlit run app.py
+```
 
 ## Trading Costs Reference
 
